@@ -1,3 +1,7 @@
+- Test w/Docker
+- plat name 'amd64/arm64'
+- Add packages:
+
 ant
 bat
 crane

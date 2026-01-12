@@ -81,8 +81,8 @@ nanobrew_detect_os() {
 nanobrew_detect_plat() {
     local arch; arch="$(uname -m)"
     case "$arch" in
-        x86_64|amd64) echo x86_64 ;;
-        arm64|aarch64) echo aarch64 ;;
+        x86_64|amd64) echo amd64 ;;
+        arm64|aarch64) echo arm64 ;;
         *) nanobrew_die "Unsupported arch: $arch" ;;
     esac
 }
@@ -298,43 +298,41 @@ nanobrew_find_binary_relpath() {
     printf '%s\n' "${found#"$root_dir"/}"
 }
 
+nanobrew_tarball_dir_name() {
+    local url=$1
+    local name
+    name="$(basename "$url")"
+    case "$name" in
+        *.tar.gz) name="${name%.tar.gz}" ;;
+        *.tgz) name="${name%.tgz}" ;;
+    esac
+    printf '%s\n' "$name"
+}
+
 nanobrew_pkg_install_from_tar_gz_url() {
-    local pkg=$1 version=$2 url=$3; shift 3
+    local pkg=$1 version=$2 url=$3 install_dir=$4; shift 4
     local -a bin_names=("$@")
 
     nanobrew_ensure_dirs
 
-    local tmp; tmp="$(nanobrew_mktempdir)"
-    local archive="$tmp/archive.tar.gz"
-    local extract="$tmp/extract"
-    mkdir -p "$extract"
+    local target_dir="$NANOBREW_OPT_DIR/$install_dir"
+    rm -rf "$target_dir"
+    mkdir -p "$target_dir"
 
     nanobrew_warn "Downloading $pkg $version"
-    curl --fail --location --silent --show-error --output "$archive" "$url"
-    tar -xzf "$archive" -C "$extract"
-
-    local root_dir; root_dir="$(nanobrew_extract_root_dir "$extract")"
-
-    local pkg_dir="$NANOBREW_OPT_DIR/$pkg"
-    local version_dir="$pkg_dir/$version"
-    rm -rf "$pkg_dir"
-    mkdir -p "$version_dir"
-
-    nanobrew_move_dir_contents "$root_dir" "$version_dir"
-    ln -nfs "$version" "$pkg_dir/current"
+    curl --fail --location --silent --show-error "$url" | tar -xzf - -C "$target_dir"
 
     local bin
     for bin in "${bin_names[@]}"; do
-        local relpath; relpath="$(nanobrew_find_binary_relpath "$version_dir" "$bin")"
-        ln -nfs "../opt/$pkg/current/$relpath" "$NANOBREW_BIN_DIR/$bin"
+        local relpath; relpath="$(nanobrew_find_binary_relpath "$target_dir" "$bin")"
+        ln -nfs "../opt/$install_dir/$relpath" "$NANOBREW_BIN_DIR/$bin"
     done
 
-    rm -rf "$tmp"
     nanobrew_db_set_version "$pkg" "$version"
 }
 
 nanobrew_safe_unlink_bin() {
-    local pkg=$1 bin=$2
+    local install_dir=$1 bin=$2
     nanobrew_init_env
     local link="$NANOBREW_BIN_DIR/$bin"
     if [[ ! -L "$link" ]]; then
@@ -342,7 +340,7 @@ nanobrew_safe_unlink_bin() {
     fi
     local target; target="$(readlink "$link")"
     case "$target" in
-        ../opt/"$pkg"/*) rm -f "$link" ;;
+        ../opt/"$install_dir"/*) rm -f "$link" ;;
         *) nanobrew_warn "Skipping $link (not managed by nanobrew): $target" ;;
     esac
 }
@@ -357,38 +355,57 @@ nanobrew_pkg_uninstall_generic() {
         return 0
     fi
 
+    local version install_dir
+    version="$(nanobrew_db_get_version "$pkg")"
+    install_dir="$(nanobrew_pkg_call "$pkg" install_dir "$version")"
+    if [[ -z "$install_dir" ]]; then
+        nanobrew_die "Missing install dir for $pkg $version"
+    fi
+
     local bin
     for bin in "${bin_names[@]}"; do
-        nanobrew_safe_unlink_bin "$pkg" "$bin"
+        nanobrew_safe_unlink_bin "$install_dir" "$bin"
     done
 
-    rm -rf "${NANOBREW_OPT_DIR:?}/$pkg"
+    rm -rf "${NANOBREW_OPT_DIR:?}/$install_dir"
     nanobrew_db_unset_pkg "$pkg"
 }
 
 nanobrew_rust_target_triple() {
     nanobrew_init_env
     case "${NANOBREW_OS}/${NANOBREW_PLAT}" in
-        linux/x86_64) echo x86_64-unknown-linux-musl ;;
-        linux/aarch64) echo aarch64-unknown-linux-musl ;;
-        darwin/x86_64) echo x86_64-apple-darwin ;;
-        darwin/aarch64) echo aarch64-apple-darwin ;;
+        linux/amd64) echo x86_64-unknown-linux-musl ;;
+        linux/arm64) echo aarch64-unknown-linux-musl ;;
+        darwin/amd64) echo x86_64-apple-darwin ;;
+        darwin/arm64) echo aarch64-apple-darwin ;;
         *) nanobrew_die "Unsupported platform: ${NANOBREW_OS}/${NANOBREW_PLAT}" ;;
     esac
 }
 
+# --- Package callbacks (install/uninstall/env hooks) ---
+
 nanobrew_pkg_ripgrep_latest_version() {
     nanobrew_github_latest_tag BurntSushi/ripgrep
+}
+
+nanobrew_pkg_ripgrep_install_dir() {
+    local version=$1
+    local triple; triple="$(nanobrew_rust_target_triple)"
+    printf 'ripgrep-%s-%s\n' "${version#v}" "$triple"
 }
 
 nanobrew_pkg_ripgrep_install() {
     local version; version="$(nanobrew_pkg_ripgrep_latest_version)"
     local json; json="$(nanobrew_github_release_json BurntSushi/ripgrep)"
     local triple; triple="$(nanobrew_rust_target_triple)"
-    local name_re="^ripgrep-${version#v}-${triple}\\.tar\\.gz$"
+    local asset="ripgrep-${version#v}-${triple}.tar.gz"
+    local name_re="^${asset}$"
     local url; url="$(nanobrew_github_asset_url "$json" "$name_re")"
-    nanobrew_pkg_install_from_tar_gz_url ripgrep "$version" "$url" rg
+    local install_dir; install_dir="$(nanobrew_tarball_dir_name "$asset")"
+    nanobrew_pkg_install_from_tar_gz_url ripgrep "$version" "$url" "$install_dir" rg
 }
+
+
 
 nanobrew_pkg_ripgrep_uninstall() {
     nanobrew_pkg_uninstall_generic ripgrep rg
@@ -398,14 +415,24 @@ nanobrew_pkg_bat_latest_version() {
     nanobrew_github_latest_tag sharkdp/bat
 }
 
+nanobrew_pkg_bat_install_dir() {
+    local version=$1
+    local triple; triple="$(nanobrew_rust_target_triple)"
+    printf 'bat-v%s-%s\n' "${version#v}" "$triple"
+}
+
 nanobrew_pkg_bat_install() {
     local version; version="$(nanobrew_pkg_bat_latest_version)"
     local json; json="$(nanobrew_github_release_json sharkdp/bat)"
     local triple; triple="$(nanobrew_rust_target_triple)"
-    local name_re="^bat-v?${version#v}-${triple}\\.tar\\.gz$"
+    local asset="bat-v${version#v}-${triple}.tar.gz"
+    local name_re="^${asset}$"
     local url; url="$(nanobrew_github_asset_url "$json" "$name_re")"
-    nanobrew_pkg_install_from_tar_gz_url bat "$version" "$url" bat
+    local install_dir; install_dir="$(nanobrew_tarball_dir_name "$asset")"
+    nanobrew_pkg_install_from_tar_gz_url bat "$version" "$url" "$install_dir" bat
 }
+
+
 
 nanobrew_pkg_bat_uninstall() {
     nanobrew_pkg_uninstall_generic bat bat
@@ -415,23 +442,35 @@ nanobrew_pkg_eza_latest_version() {
     nanobrew_github_latest_tag eza-community/eza
 }
 
+nanobrew_pkg_eza_asset_name() {
+    nanobrew_init_env
+    case "${NANOBREW_OS}/${NANOBREW_PLAT}" in
+        linux/amd64) printf '%s\n' 'eza_x86_64-unknown-linux-musl.tar.gz' ;;
+        linux/arm64) printf '%s\n' 'eza_aarch64-unknown-linux-gnu.tar.gz' ;;
+        darwin/amd64) printf '%s\n' 'eza_x86_64-apple-darwin.tar.gz' ;;
+        darwin/arm64) printf '%s\n' 'eza_aarch64-apple-darwin.tar.gz' ;;
+        *) nanobrew_die "Unsupported platform: ${NANOBREW_OS}/${NANOBREW_PLAT}" ;;
+    esac
+}
+
+nanobrew_pkg_eza_install_dir() {
+    local asset
+    asset="$(nanobrew_pkg_eza_asset_name)"
+    nanobrew_tarball_dir_name "$asset"
+}
+
 nanobrew_pkg_eza_install() {
     local version; version="$(nanobrew_pkg_eza_latest_version)"
     local json; json="$(nanobrew_github_release_json eza-community/eza)"
 
-    nanobrew_init_env
-    local name_re
-    case "${NANOBREW_OS}/${NANOBREW_PLAT}" in
-        linux/x86_64) name_re='^eza_.*x86_64-unknown-linux-(musl|gnu)\\.tar\\.gz$' ;;
-        linux/aarch64) name_re='^eza_.*aarch64-unknown-linux-(musl|gnu)\\.tar\\.gz$' ;;
-        darwin/x86_64) name_re='^eza_.*x86_64-apple-darwin\\.tar\\.gz$' ;;
-        darwin/aarch64) name_re='^eza_.*aarch64-apple-darwin\\.tar\\.gz$' ;;
-        *) nanobrew_die "Unsupported platform: ${NANOBREW_OS}/${NANOBREW_PLAT}" ;;
-    esac
-
+    local asset; asset="$(nanobrew_pkg_eza_asset_name)"
+    local name_re="^${asset}$"
     local url; url="$(nanobrew_github_asset_url "$json" "$name_re")"
-    nanobrew_pkg_install_from_tar_gz_url eza "$version" "$url" eza
+    local install_dir; install_dir="$(nanobrew_tarball_dir_name "$asset")"
+    nanobrew_pkg_install_from_tar_gz_url eza "$version" "$url" "$install_dir" eza
 }
+
+
 
 nanobrew_pkg_eza_uninstall() {
     nanobrew_pkg_uninstall_generic eza eza
@@ -441,14 +480,23 @@ nanobrew_pkg_zellij_latest_version() {
     nanobrew_github_latest_tag zellij-org/zellij
 }
 
+nanobrew_pkg_zellij_install_dir() {
+    local triple; triple="$(nanobrew_rust_target_triple)"
+    printf 'zellij-%s\n' "$triple"
+}
+
 nanobrew_pkg_zellij_install() {
     local version; version="$(nanobrew_pkg_zellij_latest_version)"
     local json; json="$(nanobrew_github_release_json zellij-org/zellij)"
     local triple; triple="$(nanobrew_rust_target_triple)"
-    local name_re="^zellij-${triple}\\.tar\\.gz$"
+    local asset="zellij-${triple}.tar.gz"
+    local name_re="^${asset}$"
     local url; url="$(nanobrew_github_asset_url "$json" "$name_re")"
-    nanobrew_pkg_install_from_tar_gz_url zellij "$version" "$url" zellij
+    local install_dir; install_dir="$(nanobrew_tarball_dir_name "$asset")"
+    nanobrew_pkg_install_from_tar_gz_url zellij "$version" "$url" "$install_dir" zellij
 }
+
+
 
 nanobrew_pkg_zellij_uninstall() {
     nanobrew_pkg_uninstall_generic zellij zellij
@@ -458,18 +506,30 @@ nanobrew_pkg_zoxide_latest_version() {
     nanobrew_github_latest_tag ajeetdsouza/zoxide
 }
 
+nanobrew_pkg_zoxide_install_dir() {
+    local version=$1
+    local triple; triple="$(nanobrew_rust_target_triple)"
+    printf 'zoxide-%s-%s\n' "${version#v}" "$triple"
+}
+
 nanobrew_pkg_zoxide_install() {
     local version; version="$(nanobrew_pkg_zoxide_latest_version)"
     local json; json="$(nanobrew_github_release_json ajeetdsouza/zoxide)"
     local triple; triple="$(nanobrew_rust_target_triple)"
-    local name_re="^zoxide-v?${version#v}-${triple}\\.tar\\.gz$"
+    local asset="zoxide-${version#v}-${triple}.tar.gz"
+    local name_re="^${asset}$"
     local url; url="$(nanobrew_github_asset_url "$json" "$name_re")"
-    nanobrew_pkg_install_from_tar_gz_url zoxide "$version" "$url" zoxide
+    local install_dir; install_dir="$(nanobrew_tarball_dir_name "$asset")"
+    nanobrew_pkg_install_from_tar_gz_url zoxide "$version" "$url" "$install_dir" zoxide
 }
+
+
 
 nanobrew_pkg_zoxide_uninstall() {
     nanobrew_pkg_uninstall_generic zoxide zoxide
 }
+
+# --- End package callbacks ---
 
 nanobrew_pkg_func_prefix() {
     local pkg=$1
