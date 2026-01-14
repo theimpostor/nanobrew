@@ -7,13 +7,17 @@
     - how to add a package
     - how to test
 - Don't support sourcing - just require 'source <(./nanobrew.sh env)'
-- exit if sourced
+  - check and exit if being sourced
 - remove 'nanobrew_' prefix from all functions
-- env only needs to update path and any env callbacks
+- env command:
+  - update path
+  - add alias 'nb'
+  - run env callbacks
 - Test w/Docker
 - Add packages:
   ant
   bat
+  bun
   crane
   dive
   dua
@@ -48,3 +52,5 @@
   wezterm
   zellij
   zoxide
+
+<!-- vim: set ft=markdown sw=2 ts=2 expandtab: -->
