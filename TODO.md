@@ -6,13 +6,6 @@
   - contributing
     - how to add a package
     - how to test
-- Don't support sourcing - just require 'source <(./nanobrew.sh env)'
-  - check and exit if being sourced
-- remove 'nanobrew_' prefix from all functions
-- env command:
-  - update path
-  - add alias 'nb'
-  - run env callbacks
 - Test w/Docker
 - Add packages:
   ant
