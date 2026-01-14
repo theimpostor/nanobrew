@@ -20,6 +20,6 @@ COPY nanobrew.sh /root/.local/bin/nanobrew.sh
 
 RUN /root/.local/bin/nanobrew.sh env >> ~/.bashrc
 
-# RUN nanobrew.sh install ripgrep
+RUN /root/.local/bin/nanobrew.sh install ripgrep
 
-# RUN find /root/.local
+RUN find /root/.local
