@@ -6,8 +6,30 @@ if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
     return 1
 fi
 
+color_enabled() {
+    local stream_fd=$1
+    case "${NANOBREW_COLOR:-auto}" in
+        on) return 0 ;;
+        off) return 1 ;;
+        auto) [[ -t "$stream_fd" ]] ;;
+        *) [[ -t "$stream_fd" ]] ;;
+    esac
+}
+
 warn() {
-    >&2 echo "$@"
+    if color_enabled 2; then
+        >&2 printf '\033[31m%s\033[0m\n' "$*"
+    else
+        >&2 echo "$@"
+    fi
+}
+
+log() {
+    if color_enabled 2; then
+        >&2 printf '\033[32m%s\033[0m\n' "$*"
+    else
+        >&2 echo "$@"
+    fi
 }
 
 die() {
@@ -23,6 +45,7 @@ Usage: nanobrew.sh [--debug] <command> [args...]
 
 Environment:
   NANOBREW_HOME_DIR  Install prefix root (default: $HOME/.local)
+  NANOBREW_COLOR     Color output: auto|on|off (default: auto)
 
 Commands:
   install   <pkg...>        Install latest if missing
@@ -76,6 +99,7 @@ init_env() {
     : "${NANOBREW_HOME_DIR:=${HOME}/.local}"
     : "${NANOBREW_OS:=$(detect_os)}"
     : "${NANOBREW_PLAT:=$(detect_plat)}"
+    : "${NANOBREW_COLOR:=auto}"
 
     : "${NANOBREW_PREFIX_DIR:=${NANOBREW_HOME_DIR}/${NANOBREW_OS}/${NANOBREW_PLAT}}"
     : "${NANOBREW_STATE_DIR:=${NANOBREW_HOME_DIR}/.nanobrew}"
@@ -238,6 +262,17 @@ github_asset_url() {
     local json_file=$1 name_re=$2
     local -a urls=()
     mapfile -t urls < <(jq -r --arg re "$name_re" '.assets[] | select(.name | test($re)) | .browser_download_url' <"$json_file")
+    if ((${#urls[@]} == 0)); then
+        local -a assets=()
+        mapfile -t assets < <(jq -r '.assets[].name' <"$json_file")
+        log "No asset match for regex: ${name_re}"
+        if ((${#assets[@]} == 0)); then
+            log "No assets found in release."
+        else
+            log "Available assets:"
+            >&2 printf '%s\n' "${assets[@]}"
+        fi
+    fi
     select_single_line "asset regex $name_re" "${urls[@]}"
 }
 
@@ -304,7 +339,7 @@ pkg_install_from_tar_gz_url() {
     rm -rf "$target_dir"
     mkdir -p "$target_dir"
 
-    warn "Downloading $pkg $version"
+    log "Downloading $pkg $version"
     curl --fail --location --silent --show-error "$url" | tar -xzf - -C "$target_dir"
 
     local bin
@@ -529,6 +564,7 @@ pkg_call() {
     if ! declare -F "$fn" >/dev/null; then
         die "Unknown package or action: $pkg $action"
     fi
+    log "calling ${pkg} ${action}"
     "$fn" "$@"
 }
 
@@ -664,7 +700,7 @@ cmd_upgrade() {
             die "Unable to determine latest version for $pkg"
         fi
         if [[ -z "$installed_version" || "$installed_version" != "$latest_version" ]]; then
-            warn "Upgrading $pkg"
+            log "Upgrading $pkg"
             if [[ -n "$installed_version" ]]; then
                 pkg_call "$pkg" uninstall "$installed_version"
                 db_unset_pkg "$pkg"

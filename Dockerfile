@@ -9,7 +9,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ca-certificates \
         curl \
         jq \
-        tree
+        tree \
+        vim
 
 RUN mkdir -p /root/.local/bin
 
@@ -20,6 +21,6 @@ COPY nanobrew.sh /root/.local/bin/nanobrew.sh
 
 RUN /root/.local/bin/nanobrew.sh env >> ~/.bashrc
 
-RUN /root/.local/bin/nanobrew.sh install ripgrep
+# RUN /root/.local/bin/nanobrew.sh install ripgrep
 
-RUN find /root/.local
+# RUN find /root/.local
