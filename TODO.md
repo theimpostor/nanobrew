@@ -9,7 +9,6 @@
 - Test w/Docker
 - Add packages:
   ant
-  bat
   bun
   crane
   dive
@@ -35,7 +34,6 @@
   pandoc
   rbac-tool
   regctl
-  ripgrep
   shellcheck
   starship
   temurin
@@ -43,7 +41,5 @@
   viddy
   vivid
   wezterm
-  zellij
-  zoxide
 
 <!-- vim: set ft=markdown sw=2 ts=2 expandtab: -->
