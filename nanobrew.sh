@@ -157,7 +157,10 @@ db_save_if_dirty() {
     local tmp="${NANOBREW_DB_FILE}.tmp.$$"
     {
         echo "# nanobrew db (generated)"; echo
-        declare -p NANOBREW_DB_SCHEMA_VERSION NANOBREW_DB_PKG_VERSION NANOBREW_DB_PKG_INSTALLED_AT
+        local line
+        while IFS= read -r line; do
+            printf '%s\n' "${line/declare /declare -g }"
+        done < <(declare -p NANOBREW_DB_SCHEMA_VERSION NANOBREW_DB_PKG_VERSION NANOBREW_DB_PKG_INSTALLED_AT)
     } >"$tmp"
     mv "$tmp" "$NANOBREW_DB_FILE"
     NANOBREW_DB_DIRTY=0
@@ -610,6 +613,7 @@ cmd_install() {
         fi
         pkg_call "$pkg" install "$version"
         db_set_version "$pkg" "$version"
+        db_save_if_dirty
     done
 }
 
@@ -635,6 +639,7 @@ cmd_uninstall() {
         version="$(db_get_version "$pkg")"
         pkg_call "$pkg" uninstall "$version"
         db_unset_pkg "$pkg"
+        db_save_if_dirty
     done
 }
 
@@ -704,9 +709,11 @@ cmd_upgrade() {
             if [[ -n "$installed_version" ]]; then
                 pkg_call "$pkg" uninstall "$installed_version"
                 db_unset_pkg "$pkg"
+                db_save_if_dirty
             fi
             pkg_call "$pkg" install "$latest_version"
             db_set_version "$pkg" "$latest_version"
+            db_save_if_dirty
         fi
     done
 }
@@ -759,7 +766,6 @@ cmd_env() {
 main() {
     set -o errexit -o errtrace -o pipefail -o nounset
     trap die ERR
-    trap db_save_if_dirty EXIT
 
     local cmd=""
     while (($#)); do
