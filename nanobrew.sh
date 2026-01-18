@@ -121,6 +121,7 @@ db_init() {
     declare -gi NANOBREW_DB_SCHEMA_VERSION=1
     declare -gA NANOBREW_DB_PKG_VERSION=()
     declare -gA NANOBREW_DB_PKG_INSTALLED_AT=()
+    declare -gA NANOBREW_DB_PKG_INSTALL_DIR=()
     declare -gi NANOBREW_DB_DIRTY=0
     declare -gi NANOBREW_DB_LOADED=1
 }
@@ -160,7 +161,7 @@ db_save_if_dirty() {
         local line
         while IFS= read -r line; do
             printf '%s\n' "${line/declare /declare -g }"
-        done < <(declare -p NANOBREW_DB_SCHEMA_VERSION NANOBREW_DB_PKG_VERSION NANOBREW_DB_PKG_INSTALLED_AT)
+        done < <(declare -p NANOBREW_DB_SCHEMA_VERSION NANOBREW_DB_PKG_VERSION NANOBREW_DB_PKG_INSTALLED_AT NANOBREW_DB_PKG_INSTALL_DIR)
     } >"$tmp"
     mv "$tmp" "$NANOBREW_DB_FILE"
     NANOBREW_DB_DIRTY=0
@@ -178,10 +179,21 @@ db_get_version() {
     printf '%s' "${NANOBREW_DB_PKG_VERSION[$pkg]:-}"
 }
 
+db_get_install_dir() {
+    local pkg=$1
+    db_load
+    printf '%s' "${NANOBREW_DB_PKG_INSTALL_DIR[$pkg]:-}"
+}
+
 db_set_version() {
-    local pkg=$1 version=$2
+    local pkg=$1 version=$2 install_dir=${3:-}
     db_load
     NANOBREW_DB_PKG_VERSION["$pkg"]="$version"
+    if [[ -n "$install_dir" ]]; then
+        NANOBREW_DB_PKG_INSTALL_DIR["$pkg"]="$install_dir"
+    else
+        unset 'NANOBREW_DB_PKG_INSTALL_DIR[$pkg]'
+    fi
     NANOBREW_DB_PKG_INSTALLED_AT["$pkg"]="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     db_mark_dirty
 }
@@ -191,6 +203,7 @@ db_unset_pkg() {
     db_load
     unset 'NANOBREW_DB_PKG_VERSION[$pkg]'
     unset 'NANOBREW_DB_PKG_INSTALLED_AT[$pkg]'
+    unset 'NANOBREW_DB_PKG_INSTALL_DIR[$pkg]'
     db_mark_dirty
 }
 
@@ -321,15 +334,9 @@ find_binary_relpath() {
     printf '%s\n' "${found#"$root_dir"/}"
 }
 
-tarball_dir_name() {
-    local url=$1
-    local name
-    name="$(basename "$url")"
-    case "$name" in
-        *.tar.gz) name="${name%.tar.gz}" ;;
-        *.tgz) name="${name%.tgz}" ;;
-    esac
-    printf '%s\n' "$name"
+pkg_install_dir_default() {
+    local pkg=$1 version=$2
+    cache_sanitize_name "${pkg}-${version}"
 }
 
 pkg_install_from_tar_gz_url() {
@@ -367,7 +374,7 @@ safe_unlink_bin() {
 }
 
 pkg_uninstall_generic() {
-    local pkg=$1 version=$2; shift 2
+    local pkg=$1 version=$2 install_dir=$3; shift 3
     local -a bin_names=("$@")
 
     init_env
@@ -376,8 +383,6 @@ pkg_uninstall_generic() {
         return 0
     fi
 
-    local install_dir
-    install_dir="$(pkg_call "$pkg" install_dir "$version")"
     if [[ -z "$install_dir" ]]; then
         die "Missing install dir for $pkg $version"
     fi
@@ -407,56 +412,42 @@ pkg_ripgrep_latest_version() {
     github_latest_tag BurntSushi/ripgrep
 }
 
-pkg_ripgrep_install_dir() {
-    local version=$1
-    local triple; triple="$(rust_target_triple)"
-    printf 'ripgrep-%s-%s\n' "${version#v}" "$triple"
-}
-
 pkg_ripgrep_install() {
-    local version=$1
+    local version=$1 install_dir=$2
     local json; json="$(github_release_json BurntSushi/ripgrep)"
     local triple; triple="$(rust_target_triple)"
     local asset="ripgrep-${version#v}-${triple}.tar.gz"
     local name_re="^${asset}$"
     local url; url="$(github_asset_url "$json" "$name_re")"
-    local install_dir; install_dir="$(tarball_dir_name "$asset")"
     pkg_install_from_tar_gz_url ripgrep "$version" "$url" "$install_dir" rg
 }
 
 
 
 pkg_ripgrep_uninstall() {
-    local version=$1
-    pkg_uninstall_generic ripgrep "$version" rg
+    local version=$1 install_dir=$2
+    pkg_uninstall_generic ripgrep "$version" "$install_dir" rg
 }
 
 pkg_bat_latest_version() {
     github_latest_tag sharkdp/bat
 }
 
-pkg_bat_install_dir() {
-    local version=$1
-    local triple; triple="$(rust_target_triple)"
-    printf 'bat-v%s-%s\n' "${version#v}" "$triple"
-}
-
 pkg_bat_install() {
-    local version=$1
+    local version=$1 install_dir=$2
     local json; json="$(github_release_json sharkdp/bat)"
     local triple; triple="$(rust_target_triple)"
     local asset="bat-v${version#v}-${triple}.tar.gz"
     local name_re="^${asset}$"
     local url; url="$(github_asset_url "$json" "$name_re")"
-    local install_dir; install_dir="$(tarball_dir_name "$asset")"
     pkg_install_from_tar_gz_url bat "$version" "$url" "$install_dir" bat
 }
 
 
 
 pkg_bat_uninstall() {
-    local version=$1
-    pkg_uninstall_generic bat "$version" bat
+    local version=$1 install_dir=$2
+    pkg_uninstall_generic bat "$version" "$install_dir" bat
 }
 
 pkg_eza_latest_version() {
@@ -474,83 +465,63 @@ pkg_eza_asset_name() {
     esac
 }
 
-pkg_eza_install_dir() {
-    local asset
-    asset="$(pkg_eza_asset_name)"
-    tarball_dir_name "$asset"
-}
-
 pkg_eza_install() {
-    local version=$1
+    local version=$1 install_dir=$2
     local json; json="$(github_release_json eza-community/eza)"
 
     local asset; asset="$(pkg_eza_asset_name)"
     local name_re="^${asset}$"
     local url; url="$(github_asset_url "$json" "$name_re")"
-    local install_dir; install_dir="$(tarball_dir_name "$asset")"
     pkg_install_from_tar_gz_url eza "$version" "$url" "$install_dir" eza
 }
 
 
 
 pkg_eza_uninstall() {
-    local version=$1
-    pkg_uninstall_generic eza "$version" eza
+    local version=$1 install_dir=$2
+    pkg_uninstall_generic eza "$version" "$install_dir" eza
 }
 
 pkg_zellij_latest_version() {
     github_latest_tag zellij-org/zellij
 }
 
-pkg_zellij_install_dir() {
-    local triple; triple="$(rust_target_triple)"
-    printf 'zellij-%s\n' "$triple"
-}
-
 pkg_zellij_install() {
-    local version=$1
+    local version=$1 install_dir=$2
     local json; json="$(github_release_json zellij-org/zellij)"
     local triple; triple="$(rust_target_triple)"
     local asset="zellij-${triple}.tar.gz"
     local name_re="^${asset}$"
     local url; url="$(github_asset_url "$json" "$name_re")"
-    local install_dir; install_dir="$(tarball_dir_name "$asset")"
     pkg_install_from_tar_gz_url zellij "$version" "$url" "$install_dir" zellij
 }
 
 
 
 pkg_zellij_uninstall() {
-    local version=$1
-    pkg_uninstall_generic zellij "$version" zellij
+    local version=$1 install_dir=$2
+    pkg_uninstall_generic zellij "$version" "$install_dir" zellij
 }
 
 pkg_zoxide_latest_version() {
     github_latest_tag ajeetdsouza/zoxide
 }
 
-pkg_zoxide_install_dir() {
-    local version=$1
-    local triple; triple="$(rust_target_triple)"
-    printf 'zoxide-%s-%s\n' "${version#v}" "$triple"
-}
-
 pkg_zoxide_install() {
-    local version=$1
+    local version=$1 install_dir=$2
     local json; json="$(github_release_json ajeetdsouza/zoxide)"
     local triple; triple="$(rust_target_triple)"
     local asset="zoxide-${version#v}-${triple}.tar.gz"
     local name_re="^${asset}$"
     local url; url="$(github_asset_url "$json" "$name_re")"
-    local install_dir; install_dir="$(tarball_dir_name "$asset")"
     pkg_install_from_tar_gz_url zoxide "$version" "$url" "$install_dir" zoxide
 }
 
 
 
 pkg_zoxide_uninstall() {
-    local version=$1
-    pkg_uninstall_generic zoxide "$version" zoxide
+    local version=$1 install_dir=$2
+    pkg_uninstall_generic zoxide "$version" "$install_dir" zoxide
 }
 
 # --- End package callbacks ---
@@ -567,7 +538,6 @@ pkg_call() {
     if ! declare -F "$fn" >/dev/null; then
         die "Unknown package or action: $pkg $action"
     fi
-    log "calling ${pkg} ${action}"
     "$fn" "$@"
 }
 
@@ -611,8 +581,10 @@ cmd_install() {
         if [[ -z "$version" ]]; then
             die "Unable to determine latest version for $pkg"
         fi
-        pkg_call "$pkg" install "$version"
-        db_set_version "$pkg" "$version"
+        local install_dir
+        install_dir="$(pkg_install_dir_default "$pkg" "$version")"
+        pkg_call "$pkg" install "$version" "$install_dir"
+        db_set_version "$pkg" "$version" "$install_dir"
         db_save_if_dirty
     done
 }
@@ -637,7 +609,9 @@ cmd_uninstall() {
         fi
         local version
         version="$(db_get_version "$pkg")"
-        pkg_call "$pkg" uninstall "$version"
+        local install_dir
+        install_dir="$(db_get_install_dir "$pkg")"
+        pkg_call "$pkg" uninstall "$version" "$install_dir"
         db_unset_pkg "$pkg"
         db_save_if_dirty
     done
@@ -707,12 +681,16 @@ cmd_upgrade() {
         if [[ -z "$installed_version" || "$installed_version" != "$latest_version" ]]; then
             log "Upgrading $pkg"
             if [[ -n "$installed_version" ]]; then
-                pkg_call "$pkg" uninstall "$installed_version"
+                local install_dir
+                install_dir="$(db_get_install_dir "$pkg")"
+                pkg_call "$pkg" uninstall "$installed_version" "$install_dir"
                 db_unset_pkg "$pkg"
                 db_save_if_dirty
             fi
-            pkg_call "$pkg" install "$latest_version"
-            db_set_version "$pkg" "$latest_version"
+            local new_install_dir
+            new_install_dir="$(pkg_install_dir_default "$pkg" "$latest_version")"
+            pkg_call "$pkg" install "$latest_version" "$new_install_dir"
+            db_set_version "$pkg" "$latest_version" "$new_install_dir"
             db_save_if_dirty
         fi
     done

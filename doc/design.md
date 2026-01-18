@@ -77,6 +77,29 @@ trap die ERR
 # future stuff
 lock file - future enhancement
 
+declarative package specs + generic installers (to simplify adding many package types)
+  - single required callback per pkg: <pkg>_spec
+    - sets metadata vars, no logic
+    - optional <pkg>_env (only when needed)
+    - optional <pkg>_install / <pkg>_uninstall overrides for non-standard cases
+  - add generic installer types, e.g.:
+    - github_release_tar / github_release_zip
+    - url_tar / url_zip / url_bin
+    - git_build (git clone + build command)
+  - store install_dir + bin list in DB at install time to make uninstall generic
+  - fallback path: if install_dir not in DB, recompute or call override
+  - spec field sketch (all strings unless noted):
+    - PKG_TYPE
+    - PKG_REPO / PKG_URL
+    - PKG_ASSET_RE (regex; may use ${version}, ${triple})
+    - PKG_BINS (array)
+    - PKG_INSTALL_DIR (template; may use ${version}, ${triple})
+    - PKG_BUILD_CMD (for git_build)
+  - flow:
+    - latest_version: generic per type, pkg spec only
+    - install: generic per type, record install_dir + bins in DB
+    - uninstall: generic, removes symlinks + opt dir from DB metadata
+
 bash 4/5 => bash 3 polyfills?
 
 https://pnut.sh/ -> transpile C to POSIX sh
