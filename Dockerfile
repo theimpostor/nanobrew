@@ -1,7 +1,5 @@
 FROM ubuntu:latest
 
-SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
-
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Using bind mounts for apt cache, don't wipe after install
@@ -16,16 +14,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         tree \
         vim
 
-RUN mkdir -p /root/.local/bin
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
-COPY nanobrew.sh /root/.local/bin/nanobrew.sh
+ENV NANOBREW_IN_DOCKER=1
 
-RUN /root/.local/bin/nanobrew.sh env >> ~/.bashrc
+WORKDIR /root/nanobrew
 
-WORKDIR /root
+COPY . .
 
 ENTRYPOINT [ "/bin/bash" ]
-
-RUN /root/.local/bin/nanobrew.sh install ripgrep shellcheck
-
-# RUN shellcheck /root/.local/bin/nanobrew.sh

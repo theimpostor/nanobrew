@@ -35,7 +35,6 @@
   pandoc
   rbac-tool
   regctl
-  shellcheck
   starship
   temurin
   ttyd
