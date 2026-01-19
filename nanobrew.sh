@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2250
 # vim:ft=bash:sw=4:ts=4:expandtab
 
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
@@ -17,6 +18,7 @@ color_enabled() {
 }
 
 warn() {
+    # shellcheck disable=SC2310 # color_enabled returns 1 when color should be disabled.
     if color_enabled 2; then
         >&2 printf '\033[31m%s\033[0m\n' "$*"
     else
@@ -25,6 +27,7 @@ warn() {
 }
 
 log() {
+    # shellcheck disable=SC2310 # color_enabled returns 1 when color should be disabled.
     if color_enabled 2; then
         >&2 printf '\033[32m%s\033[0m\n' "$*"
     else
@@ -35,7 +38,7 @@ log() {
 die() {
     local ec=$?; if ((ec == 0)); then ec=1; fi
     if (($#)); then warn -n "died: "; warn "$@"; else warn "died."; fi
-    local frame=0; while caller $frame; do ((++frame)); done
+    local frame=0; while caller "$frame"; do ((++frame)); done
     exit "$ec"
 }
 
@@ -97,8 +100,12 @@ detect_plat() {
 
 init_env() {
     : "${NANOBREW_HOME_DIR:=${HOME}/.local}"
-    : "${NANOBREW_OS:=$(detect_os)}"
-    : "${NANOBREW_PLAT:=$(detect_plat)}"
+    if [[ -z "${NANOBREW_OS:-}" ]]; then
+        NANOBREW_OS="$(detect_os)"
+    fi
+    if [[ -z "${NANOBREW_PLAT:-}" ]]; then
+        NANOBREW_PLAT="$(detect_plat)"
+    fi
     : "${NANOBREW_COLOR:=auto}"
 
     : "${NANOBREW_PREFIX_DIR:=${NANOBREW_HOME_DIR}/${NANOBREW_OS}/${NANOBREW_PLAT}}"
@@ -277,10 +284,22 @@ select_single_line() {
 github_asset_url() {
     local json_file=$1 name_re=$2
     local -a urls=()
-    mapfile -t urls < <(jq -r --arg re "$name_re" '.assets[] | select(.name | test($re)) | .browser_download_url' <"$json_file")
+    local urls_raw
+    if ! urls_raw="$(jq -r --arg re "$name_re" '.assets[] | select(.name | test($re)) | .browser_download_url' <"$json_file")"; then
+        die "Failed to parse asset URLs from: $json_file"
+    fi
+    if [[ -n "$urls_raw" ]]; then
+        mapfile -t urls <<<"$urls_raw"
+    fi
     if ((${#urls[@]} == 0)); then
         local -a assets=()
-        mapfile -t assets < <(jq -r '.assets[].name' <"$json_file")
+        local assets_raw
+        if ! assets_raw="$(jq -r '.assets[].name' <"$json_file")"; then
+            die "Failed to parse asset names from: $json_file"
+        fi
+        if [[ -n "$assets_raw" ]]; then
+            mapfile -t assets <<<"$assets_raw"
+        fi
         log "No asset match for regex: ${name_re}"
         if ((${#assets[@]} == 0)); then
             log "No assets found in release."
@@ -295,7 +314,13 @@ github_asset_url() {
 extract_root_dir() {
     local extract_dir=$1
     local -a entries=()
-    mapfile -t entries < <(find "$extract_dir" -mindepth 1 -maxdepth 1 -print)
+    local entries_raw
+    if ! entries_raw="$(find "$extract_dir" -mindepth 1 -maxdepth 1 -print)"; then
+        die "Failed to list extracted entries in: $extract_dir"
+    fi
+    if [[ -n "$entries_raw" ]]; then
+        mapfile -t entries <<<"$entries_raw"
+    fi
     if ((${#entries[@]} == 1)) && [[ -d "${entries[0]}" ]]; then
         printf '%s\n' "${entries[0]}"
         return 0
@@ -568,15 +593,20 @@ pkg_call() {
 }
 
 known_pkgs() {
-    printf '%s\n' ripgrep bat eza zellij zoxide shellcheck
+    printf '%s\n' "${NANOBREW_KNOWN_PKGS[@]}"
 }
 
-is_known_pkg() {
+NANOBREW_KNOWN_PKGS=(ripgrep bat eza zellij zoxide shellcheck)
+
+require_known_pkg() {
     local pkg=$1
-    case "$pkg" in
-        ripgrep|bat|eza|zellij|zoxide|shellcheck) return 0 ;;
-        *) return 1 ;;
-    esac
+    local known
+    for known in "${NANOBREW_KNOWN_PKGS[@]}"; do
+        if [[ "$pkg" == "$known" ]]; then
+            return 0
+        fi
+    done
+    die "Unknown package: $pkg"
 }
 
 cmd_pkgs() {
@@ -595,11 +625,10 @@ cmd_install() {
 
     local pkg
     for pkg in "${pkgs[@]}"; do
-        if ! is_known_pkg "$pkg"; then
-            die "Unknown package: $pkg"
-        fi
-        if db_is_installed "$pkg"; then
-            warn "$pkg already installed ($(db_get_version "$pkg"))"
+        require_known_pkg "$pkg"
+        if [[ -n "${NANOBREW_DB_PKG_VERSION[$pkg]:-}" ]]; then
+            local installed_version="${NANOBREW_DB_PKG_VERSION[$pkg]:-}"
+            warn "$pkg already installed ($installed_version)"
             continue
         fi
         local version
@@ -627,33 +656,16 @@ cmd_uninstall() {
 
     local pkg
     for pkg in "${pkgs[@]}"; do
-        if ! is_known_pkg "$pkg"; then
-            die "Unknown package: $pkg"
-        fi
-        if ! db_is_installed "$pkg"; then
+        require_known_pkg "$pkg"
+        if [[ -z "${NANOBREW_DB_PKG_VERSION[$pkg]:-}" ]]; then
             continue
         fi
-        local version
-        version="$(db_get_version "$pkg")"
-        local install_dir
-        install_dir="$(db_get_install_dir "$pkg")"
+        local version="${NANOBREW_DB_PKG_VERSION[$pkg]:-}"
+        local install_dir="${NANOBREW_DB_PKG_INSTALL_DIR[$pkg]:-}"
         pkg_call "$pkg" uninstall "$version" "$install_dir"
         db_unset_pkg "$pkg"
         db_save_if_dirty
     done
-}
-
-pkg_is_outdated() {
-    local pkg=$1
-    db_load
-    if ! db_is_installed "$pkg"; then
-        return 0
-    fi
-
-    local installed latest
-    installed="$(db_get_version "$pkg")"
-    latest="$(pkg_call "$pkg" latest_version)"
-    [[ "$installed" != "$latest" ]]
 }
 
 cmd_outdated() {
@@ -663,16 +675,27 @@ cmd_outdated() {
 
     local -a pkgs=("$@")
     if ((${#pkgs[@]} == 0)); then
-        mapfile -t pkgs < <(db_list_installed || true)
+        local pkgs_raw
+        pkgs_raw="$(db_list_installed)"
+        pkgs=()
+        if [[ -n "$pkgs_raw" ]]; then
+            mapfile -t pkgs <<<"$pkgs_raw"
+        fi
     fi
 
     local any=1
     local pkg
     for pkg in "${pkgs[@]}"; do
-        if ! is_known_pkg "$pkg"; then
-            die "Unknown package: $pkg"
+        require_known_pkg "$pkg"
+        local installed_version="${NANOBREW_DB_PKG_VERSION[$pkg]:-}"
+        if [[ -z "$installed_version" ]]; then
+            echo "$pkg"
+            any=0
+            continue
         fi
-        if pkg_is_outdated "$pkg"; then
+        local latest_version
+        latest_version="$(pkg_call "$pkg" latest_version)"
+        if [[ "$installed_version" != "$latest_version" ]]; then
             echo "$pkg"
             any=0
         fi
@@ -687,18 +710,18 @@ cmd_upgrade() {
 
     local -a pkgs=("$@")
     if ((${#pkgs[@]} == 0)); then
-        mapfile -t pkgs < <(db_list_installed || true)
+        local pkgs_raw
+        pkgs_raw="$(db_list_installed)"
+        pkgs=()
+        if [[ -n "$pkgs_raw" ]]; then
+            mapfile -t pkgs <<<"$pkgs_raw"
+        fi
     fi
 
     local pkg
     for pkg in "${pkgs[@]}"; do
-        if ! is_known_pkg "$pkg"; then
-            die "Unknown package: $pkg"
-        fi
-        local installed_version=""
-        if db_is_installed "$pkg"; then
-            installed_version="$(db_get_version "$pkg")"
-        fi
+        require_known_pkg "$pkg"
+        local installed_version="${NANOBREW_DB_PKG_VERSION[$pkg]:-}"
         local latest_version
         latest_version="$(pkg_call "$pkg" latest_version)"
         if [[ -z "$latest_version" ]]; then
@@ -707,8 +730,7 @@ cmd_upgrade() {
         if [[ -z "$installed_version" || "$installed_version" != "$latest_version" ]]; then
             log "Upgrading $pkg"
             if [[ -n "$installed_version" ]]; then
-                local install_dir
-                install_dir="$(db_get_install_dir "$pkg")"
+                local install_dir="${NANOBREW_DB_PKG_INSTALL_DIR[$pkg]:-}"
                 pkg_call "$pkg" uninstall "$installed_version" "$install_dir"
                 db_unset_pkg "$pkg"
                 db_save_if_dirty

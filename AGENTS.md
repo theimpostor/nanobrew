@@ -23,7 +23,7 @@ This repository a consolidated installer (`nanobrew.sh`) script that targets `~/
 - Update `known_pkgs` and `is_known_pkg`.
 - Ensure `install` is idempotent and `uninstall` removes symlinks under `$NANOBREW_BIN_DIR`.
 
-## Suggested checks
-- `shellcheck nanobrew.sh`
-- `bash -n nanobrew.sh`
+## Required checks
+- `shellcheck --enable=all --severity=style nanobrew.sh`
 - `semgrep scan --config auto nanobrew.sh`
+- `bash -n nanobrew.sh`
