@@ -1,5 +1,9 @@
 FROM ubuntu:latest
 
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+ARG DEBIAN_FRONTEND=noninteractive
+
 # Using bind mounts for apt cache, don't wipe after install
 RUN rm /etc/apt/apt.conf.d/docker-clean
 
@@ -16,11 +20,12 @@ RUN mkdir -p /root/.local/bin
 
 COPY nanobrew.sh /root/.local/bin/nanobrew.sh
 
-# TODO: syntax error
-# RUN . /root/.local/bin/nanobrew.sh
-
 RUN /root/.local/bin/nanobrew.sh env >> ~/.bashrc
 
-# RUN /root/.local/bin/nanobrew.sh install ripgrep
+WORKDIR /root
 
-# RUN find /root/.local
+ENTRYPOINT [ "/bin/bash" ]
+
+RUN /root/.local/bin/nanobrew.sh install ripgrep shellcheck
+
+# RUN shellcheck /root/.local/bin/nanobrew.sh

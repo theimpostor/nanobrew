@@ -7,6 +7,7 @@
     - how to add a package
     - how to test
 - Test w/Docker
+- display name, description
 - Add packages:
   ant
   bun

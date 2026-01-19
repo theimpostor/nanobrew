@@ -292,10 +292,6 @@ github_asset_url() {
     select_single_line "asset regex $name_re" "${urls[@]}"
 }
 
-mktempdir() {
-    mktemp -d "${TMPDIR:-/tmp}/nanobrew.XXXXXXXX"
-}
-
 extract_root_dir() {
     local extract_dir=$1
     local -a entries=()
@@ -524,6 +520,36 @@ pkg_zoxide_uninstall() {
     pkg_uninstall_generic zoxide "$version" "$install_dir" zoxide
 }
 
+pkg_shellcheck_latest_version() {
+    github_latest_tag koalaman/shellcheck
+}
+
+pkg_shellcheck_asset_name() {
+    local version=$1
+    init_env
+    case "${NANOBREW_OS}/${NANOBREW_PLAT}" in
+        linux/amd64) printf '%s\n' "shellcheck-v${version#v}.linux.x86_64.tar.gz" ;;
+        linux/arm64) printf '%s\n' "shellcheck-v${version#v}.linux.aarch64.tar.gz" ;;
+        darwin/amd64) printf '%s\n' "shellcheck-v${version#v}.darwin.x86_64.tar.gz" ;;
+        darwin/arm64) printf '%s\n' "shellcheck-v${version#v}.darwin.aarch64.tar.gz" ;;
+        *) die "Unsupported platform: ${NANOBREW_OS}/${NANOBREW_PLAT}" ;;
+    esac
+}
+
+pkg_shellcheck_install() {
+    local version=$1 install_dir=$2
+    local json; json="$(github_release_json koalaman/shellcheck)"
+    local asset; asset="$(pkg_shellcheck_asset_name "$version")"
+    local name_re="^${asset}$"
+    local url; url="$(github_asset_url "$json" "$name_re")"
+    pkg_install_from_tar_gz_url shellcheck "$version" "$url" "$install_dir" shellcheck
+}
+
+pkg_shellcheck_uninstall() {
+    local version=$1 install_dir=$2
+    pkg_uninstall_generic shellcheck "$version" "$install_dir" shellcheck
+}
+
 # --- End package callbacks ---
 
 pkg_func_prefix() {
@@ -542,13 +568,13 @@ pkg_call() {
 }
 
 known_pkgs() {
-    printf '%s\n' ripgrep bat eza zellij zoxide
+    printf '%s\n' ripgrep bat eza zellij zoxide shellcheck
 }
 
 is_known_pkg() {
     local pkg=$1
     case "$pkg" in
-        ripgrep|bat|eza|zellij|zoxide) return 0 ;;
+        ripgrep|bat|eza|zellij|zoxide|shellcheck) return 0 ;;
         *) return 1 ;;
     esac
 }
